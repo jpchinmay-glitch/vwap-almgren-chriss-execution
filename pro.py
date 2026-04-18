@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
+import os
 from dataclasses import dataclass, field
 from typing import Optional, Dict, List
 from scipy.stats import linregress
@@ -27,133 +28,132 @@ from scipy.interpolate import interp1d
 
 try:
     import yfinance as yf
-    HAS_YF = True
+    HAS_YF=True
 except Exception:
-    yf = None
-    HAS_YF = False
+    yf=None
+    HAS_YF=False
 
 # SECTION 1 — DATA CLASSES      
 @dataclass
 class MarketParams:
     """Market microstructure parameters."""
-    sigma: float        # Daily return volatility
-    eta: float          # Temporary impact coefficient
-    gamma: float        # Permanent impact coefficient
-    adv: float          # Average daily volume (shares)
-    spread_bps: float   # Full spread in basis points
-    price: float = 100.0
+    sigma:float   # Daily return volatility
+    eta:float     # Temporary impact coefficient
+    gamma:float    # Permanent impact coefficient
+    adv:float      # Average daily volume (shares)
+    spread_bps:float  # Full spread in basis points
+    price:float = 100.0
 
 @dataclass
 class OrderParams:
     """Order and strategy parameters."""
-    X: float              # Total shares to execute
-    T: int                # Execution horizon in days
-    lam: float            # Risk aversion / urgency
-    alpha_annual: float   # Annualized alpha
-    alpha_halflife: float # Signal half-life in days
-    side: int = -1        # -1 sell, +1 buy
+    X:float              # Total shares to execute
+    T:int            # Execution horizon in days
+    lam:float    # Risk aversion / urgency
+    alpha_annual:float   # Annualized alpha
+    alpha_halflife:float # Signal half-life in days
+    side: int=-1        # -1 sell, +1 buy
 
 @dataclass
 class CalibrationResult:
     """Output from empirical parameter calibration."""
-    eta: float
-    gamma: float
-    sigma: float
-    adv: float
-    spread_bps: float
-    price: float
-    r2_temp: float
-    r2_perm: float
-    notes: List[str] = field(default_factory=list)
+    eta:float
+    gamma:float
+    sigma:float
+    adv:float
+    spread_bps:float
+    price:float
+    r2_temp:float
+    r2_perm:float
+    notes:List[str]=field(default_factory=list)
 
  ## MARKET DATA
-def fetch_market_data(ticker: str = "SPY", period: str = "1y") -> Optional[pd.DataFrame]:
+def fetch_market_data(ticker:str="SPY",period:str="1y")->Optional[pd.DataFrame]:
     """Download daily OHLCV data via yfinance."""
     if not HAS_YF:
-        print("  yfinance not available. Using synthetic data.")
+        print("yfinance not available. Using synthetic data.")
         return None
 
     try:
-        df = yf.download(ticker, period=period, progress=False, auto_adjust=True)
-        if df is None or df.empty or len(df) < 40:
+        df=yf.download(ticker,period=period,progress=False,auto_adjust=True)
+        if df is None or df.empty or len(df)<40:
             return None
 
-        df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
-        df.columns = ["Open", "High", "Low", "Close", "Volume"]
+        df=df[["Open","High","Low","Close","Volume"]].copy()
+        df.columns=["Open","High","Low","Close","Volume"]
         df.dropna(inplace=True)  
-        df["Returns"] = df["Close"].pct_change()
-        df["LogReturns"] = np.log(df["Close"] / df["Close"].shift(1))
+        df["Returns"]=df["Close"].pct_change()
+        df["LogReturns"]=np.log(df["Close"]/df["Close"].shift(1))
         df.dropna(inplace=True)
-        print(f"  Fetched {len(df)} days of {ticker} data from yfinance.")
+        print(f"Fetched{len(df)} days of {ticker} data from yfinance.")
         return df
     except Exception as e:
-        print(f"  yfinance fetch failed ({e}). Using synthetic data.")
+        print(f"yfinance fetch failed ({e}).Using synthetic data.")
         return None
 
 def synthetic_market_data(
-    n_days: int = 252,
-    S0: float = 100.0,
-    mu: float = 0.08,
-    sigma: float = 0.015,
-    adv: int = 1000000,
-    seed: int = 42,
+    n_days:int=252,
+    S0:float=100.0,
+    mu:float=0.08,
+    sigma:float=0.015,
+    adv:int=1000000,
+    seed:int=42,
 ) -> pd.DataFrame:
     """Generate synthetic OHLCV data using GBM-like returns."""
-    rng = np.random.default_rng(seed)
-    dt = 1 / 252
-    ret = rng.normal(mu * dt, sigma, n_days)
-    close = S0 * np.cumprod(1 + ret)
+    rng=np.random.default_rng(seed)
+    dt=1/252
+    ret=rng.normal(mu*dt,sigma,n_days)
+    close=S0*np.cumprod(1+ret)
 
-    noise = rng.uniform(0.002, 0.008, n_days)
-    high = close * (1 + noise)
-    low = close * (1 - noise)
-    open_ = np.roll(close, 1)
-    open_[0] = S0
+    noise=rng.uniform(0.002,0.008,n_days)
+    high=close*(1+noise)
+    low=close*(1-noise)
+    open_=np.roll(close,1)
+    open_[0]=S0
+    base_vol=adv*(1+0.6*np.abs(ret)/max(sigma,1e-8))
+    volume=(base_vol*rng.lognormal(0,0.25,n_days)).astype(int)
 
-    base_vol = adv * (1 + 0.6 * np.abs(ret) / max(sigma, 1e-8))
-    volume = (base_vol * rng.lognormal(0, 0.25, n_days)).astype(int)
-
-    dates = pd.bdate_range(end=pd.Timestamp.today(), periods=n_days)
-    df = pd.DataFrame(
+    dates=pd.bdate_range(end=pd.Timestamp.today(),periods=n_days)
+    df=pd.DataFrame(
         {
-            "Open": open_,
-            "High": high,
-            "Low": low,
-            "Close": close,
-            "Volume": volume,
+            "Open":open_,
+            "High":high,
+            "Low":low,
+            "Close":close,
+            "Volume":volume,
         },
         index=dates,
     )
-    df["Returns"] = df["Close"].pct_change()
-    df["LogReturns"] = np.log(df["Close"] / df["Close"].shift(1))
+    df["Returns"]=df["Close"].pct_change()
+    df["LogReturns"]=np.log(df["Close"] / df["Close"].shift(1))
     df.dropna(inplace=True)
-    print(f"  Generated {len(df)} days of synthetic data (σ={sigma:.2%}, ADV={adv:,.0f}).")
+    print(f"Generated {len(df)} days of synthetic data (σ={sigma:.2%}, ADV={adv:,.0f}).")
     return df
 
 # SECTION 3 — VOLUME CURVE ESTIMATION
-def estimate_intraday_volume_curve(df: pd.DataFrame, n_buckets: int = 13) -> np.ndarray:
+def estimate_intraday_volume_curve(df:pd.DataFrame,n_buckets:int=13)->np.ndarray:
     """
     Estimate a proxy U-shaped intraday volume curve from daily bars.
     This is not a true empirical intraday curve because minute data is not available.
     """
-    tmp = df.copy()
-    tmp["HL"] = tmp["High"] - tmp["Low"]
-    tmp["OC"] = (tmp["Close"] - tmp["Open"]).abs()
-    tmp["skew"] = np.clip(tmp["OC"] / (tmp["HL"] + 1e-12), 0, 1)
-    mean_skew = float(tmp["skew"].mean())
-    open_weight = 0.45 + 0.30 * mean_skew
-    close_weight = 0.28 + 0.18 * mean_skew
-    mid_weight = max(1.0 - open_weight - close_weight, 0.05)
-    t = np.linspace(0, 1, n_buckets)
-    curve = (
-        open_weight * np.exp(-10 * t**2)
-        + close_weight * np.exp(-10 * (t - 1.0) ** 2)
-        + mid_weight * np.ones(n_buckets)
+    tmp=df.copy()
+    tmp["HL"]=tmp["High"]-tmp["Low"]
+    tmp["OC"]=(tmp["Close"]-tmp["Open"]).abs()
+    tmp["skew"]=np.clip(tmp["OC"]/(tmp["HL"]+1e-12),0,1)
+    mean_skew=float(tmp["skew"].mean())
+    open_weight=0.45+0.30*mean_skew
+    close_weight=0.28+0.18*mean_skew
+    mid_weight=max(1.0-open_weight-close_weight,0.05)
+    t=np.linspace(0,1,n_buckets)
+    curve=(
+        open_weight*np.exp(-10 * t**2)
+        +close_weight*np.exp(-10 * (t - 1.0) ** 2)
+        +mid_weight * np.ones(n_buckets)
     )
-    curve = np.maximum(curve, 1e-6)
-    return curve / curve.sum()
+    curve=np.maximum(curve, 1e-6)
+    return curve/curve.sum()
 
-# SECTION 4 — PARAMETER CALIBRATION
+# SECTION 4:PARAMETER CALIBRATION
 def calibrate_impact_parameters(df: pd.DataFrame) -> CalibrationResult:
     """
     Heuristically calibrate impact parameters from daily OHLCV.
@@ -165,38 +165,38 @@ def calibrate_impact_parameters(df: pd.DataFrame) -> CalibrationResult:
     Spread:
         Daily-bar proxy via high-low estimator, clipped to a sensible range.
     """
-    notes: List[str] = []
-    tmp = df.copy().dropna()
-    n = len(tmp)
-    sigma = float(tmp["LogReturns"].std())
-    adv = float(tmp["Volume"].mean())
-    price = float(tmp["Close"].iloc[-1])
+    notes:List[str] = []
+    tmp=df.copy().dropna()
+    n=len(tmp)
+    sigma=float(tmp["LogReturns"].std())
+    adv=float(tmp["Volume"].mean())
+    price=float(tmp["Close"].iloc[-1])
 
     # Permanent impact proxy
-    signed_vol = tmp["Volume"] * np.sign(tmp["Returns"].fillna(0.0))
-    participation = signed_vol / max(adv, 1e-8)
-    X_reg = participation.values[:-1]
-    y_reg = tmp["Returns"].values[1:]
+    signed_vol=tmp["Volume"]*np.sign(tmp["Returns"].fillna(0.0))
+    participation=signed_vol / max(adv, 1e-8)
+    X_reg=participation.values[:-1]
+    y_reg=tmp["Returns"].values[1:]
     slope_perm, _, r_perm, p_perm, _ = linregress(X_reg, y_reg)
-    gamma = max(float(abs(slope_perm)), 1e-6)
-    r2_perm = float(r_perm**2)
-    if p_perm > 0.10:
+    gamma=max(float(abs(slope_perm)), 1e-6)
+    r2_perm=float(r_perm**2)
+    if p_perm>0.10:
         notes.append(f"γ weakly identified on daily bars (p={p_perm:.2f}); conservative floor applied.")
-        gamma = max(gamma, 0.005)
+        gamma=max(gamma,0.005)
 
     # Temporary impact proxy
-    hl_sigma = float((np.log(tmp["High"] / tmp["Low"]) / (2 * np.sqrt(np.log(2)))).mean())
-    eta = float(np.clip(hl_sigma / np.sqrt(max(adv / 1e6, 1e-8)), 0.01, 2.0))
-    impact_proxy = tmp["High"] / tmp["Low"] - 1
-    vol_proxy = tmp["Volume"] / max(adv, 1e-8)
+    hl_sigma=float((np.log(tmp["High"] / tmp["Low"]) / (2 * np.sqrt(np.log(2)))).mean())
+    eta=float(np.clip(hl_sigma / np.sqrt(max(adv / 1e6, 1e-8)), 0.01, 2.0))
+    impact_proxy=tmp["High"] / tmp["Low"] - 1
+    vol_proxy=tmp["Volume"] / max(adv, 1e-8)
     _, _, r_temp, _, _ = linregress(vol_proxy.values, impact_proxy.values)
-    r2_temp = float(r_temp**2)
+    r2_temp=float(r_temp**2)
 
     # Spread proxy
-    log_hl = np.log(tmp["High"] / tmp["Low"])
-    beta = log_hl.rolling(2).sum().dropna()
-    alpha_cs = (np.sqrt(2 * beta) - np.sqrt(beta)) / (3 - 2 * np.sqrt(2))
-    spread_f = 2 * (np.exp(alpha_cs) - 1) / (1 + np.exp(alpha_cs))
+    log_hl=np.log(tmp["High"] / tmp["Low"])
+    beta=log_hl.rolling(2).sum().dropna()
+    alpha_cs=(np.sqrt(2 * beta) - np.sqrt(beta)) / (3 - 2 * np.sqrt(2))
+    spread_f=2 * (np.exp(alpha_cs) - 1) / (1 + np.exp(alpha_cs))
     spread_bps = float(np.clip(spread_f.mean() * 10000, 1.0, 50.0))
 
     notes.append(f"Calibrated on {n} trading days.")
@@ -220,82 +220,82 @@ def vwap_schedule(X: float, T: int, volume_curve: Optional[np.ndarray] = None) -
     """Compute a VWAP schedule by allocating shares in proportion to expected volume."""
     if volume_curve is None:
         return np.full(T, X / T)
-    if len(volume_curve) == T:
-        weights = volume_curve.copy()
+    if len(volume_curve)== T:
+        weights=volume_curve.copy()
     else:
-        orig = np.linspace(0, 1, len(volume_curve))
-        new = np.linspace(0, 1, T)
-        f = interp1d(orig, volume_curve, kind="linear")
-        weights = f(new)
-    weights = np.maximum(weights, 0)
-    weights /= weights.sum()
-    return X * weights
+        orig=np.linspace(0, 1, len(volume_curve))
+        new=np.linspace(0, 1, T)
+        f=interp1d(orig, volume_curve, kind="linear")
+        weights=f(new)
+    weights=np.maximum(weights, 0)
+    weights/=weights.sum()
+    return X*weights
 
 # SECTION 6 — ALMGREN-CHRISS MODEL
 class AlmgrenChriss:
     """Almgren-Chriss schedule and expected-cost model with linear impact."""
     def __init__(self, market: MarketParams, order: OrderParams):
-        self.m = market
-        self.o = order
-        self.tau = 1.0
-        self.kappa = np.sqrt(order.lam * market.sigma**2 / max(market.eta, 1e-12)) / self.tau
+        self.m=market
+        self.o=order
+        self.tau=1.0
+        self.kappa=np.sqrt(order.lam * market.sigma**2 / max(market.eta, 1e-12)) / self.tau
 
     def optimal_trajectory(self) -> np.ndarray:
         """Remaining inventory trajectory x_k, length T+1."""
-        T, X = self.o.T, self.o.X
-        k = np.arange(T + 1, dtype=float)
-        denom = np.sinh(self.kappa * T * self.tau)
-        if denom < 1e-12:
+        T,X=self.o.T, self.o.X
+        k=np.arange(T + 1, dtype=float)
+        denom=np.sinh(self.kappa * T * self.tau)
+        if denom<1e-12:
             return X * (1 - k / T)
-        traj = X * np.sinh(self.kappa * (T - k) * self.tau) / denom
-        return np.maximum(traj, 0.0)
+        traj=X* np.sinh(self.kappa*(T-k)*self.tau)/denom
+        return np.maximum(traj,0.0)
 
-    def optimal_trades(self) -> np.ndarray:
+    def optimal_trades(self)->np.ndarray:
         """Shares traded in each period."""
         return np.diff(-self.optimal_trajectory())
 
-    def expected_cost(self, trades: np.ndarray) -> float:
+    def expected_cost(self,trades: np.ndarray) -> float:
         """Expected cost in dollars, AC-style."""
-        perm = 0.5 * self.m.gamma * self.o.X**2
-        temp = (self.m.eta / self.tau) * float(np.sum(trades**2))
-        return perm + temp
+        perm=0.5*self.m.gamma*self.o.X**2
+        temp=(self.m.eta/self.tau)*float(np.sum(trades**2))
+        return perm+temp
 
     def variance_cost(self, trajectory: np.ndarray) -> float:
         """Variance term in dollars^2."""
-        x_mid = trajectory[1:]
+        x_mid=trajectory[1:]
         return float(self.m.sigma**2 * self.tau * np.sum(x_mid**2))
 
     def execution_shortfall_bps(self, trades: np.ndarray) -> Dict[str, float]:
         """Analytical expected-cost breakdown in basis points."""
-        X, S0, tau = self.o.X, self.m.price, self.tau
-        traj = np.r_[X, X - np.cumsum(trades)]
-        traj = np.maximum(traj, 0.0)
+        X,S0,tau=self.o.X, self.m.price, self.tau
+        traj=np.r_[X, X - np.cumsum(trades)]
+        traj=np.maximum(traj, 0.0)
 
-        cost_temp = (self.m.eta / tau) * float(np.sum(trades**2))
-        cost_perm = 0.5 * self.m.gamma * X**2
-        half_spread = (self.m.spread_bps / 10000) * S0 / 2
-        cost_spread = half_spread * float(np.sum(np.abs(trades)))
-        risk_dollar = self.o.lam * self.variance_cost(traj)
-        total = cost_temp + cost_perm + cost_spread
+        cost_temp=(self.m.eta/tau)*float(np.sum(trades**2))
+        cost_perm=0.5*self.m.gamma *X**2
+        half_spread=(self.m.spread_bps / 10000) * S0 / 2
+        cost_spread=half_spread*float(np.sum(np.abs(trades)))
+        risk_dollar=self.o.lam*self.variance_cost(traj)
+        total=cost_temp + cost_perm + cost_spread
 
         def bps(d: float) -> float:
-            return round(d / (X * S0) * 10000, 3)
+            return round(d/(X*S0)*10000,3)
 
         return {
-            "temporary_impact_bps": bps(cost_temp),
-            "permanent_impact_bps": bps(cost_perm),
+            "temporary_impact_bps":bps(cost_temp),
+            "permanent_impact_bps":bps(cost_perm),
             "spread_cost_bps": bps(cost_spread),
-            "risk_penalty_bps": bps(risk_dollar),
-            "total_cost_bps": bps(total),
-            "total_with_risk_bps": bps(total + risk_dollar),
+            "risk_penalty_bps":bps(risk_dollar),
+            "total_cost_bps":bps(total),
+            "total_with_risk_bps":bps(total + risk_dollar),
         }
 # SECTION 7 — PATHWISE SLIPPAGE SIMULATION
 def simulate_slippage(
-    trades: np.ndarray,
-    price_path: np.ndarray,
-    market: MarketParams,
-    side: int = -1,
-    label: str = "Strategy",
+    trades:np.ndarray,
+    price_path:np.ndarray,
+    market:MarketParams,
+    side:int=-1,
+    label:str="Strategy",
 ) -> Dict:
     """
     Simulate realized execution prices on a concrete price path.
@@ -303,37 +303,37 @@ def simulate_slippage(
     For sells, lower execution prices are worse.
     Returns both realized shortfall vs arrival price and vs schedule-weighted VWAP benchmark.
     """
-    T = len(trades)
-    prices = np.asarray(price_path[:T], dtype=float)
-    S0 = float(prices[0])
-    exec_prices = np.zeros(T)
-    perm_shift = 0.0
-    spread_frac = (market.spread_bps / 10000) / 2.0
+    T=len(trades)
+    prices=np.asarray(price_path[:T], dtype=float)
+    S0=float(prices[0])
+    exec_prices=np.zeros(T)
+    perm_shift=0.0
+    spread_frac=(market.spread_bps / 10000) / 2.0
 
     for k in range(T):
-        n_k = float(trades[k])
-        participation = n_k / max(market.adv, 1e-12)
-        temp_frac = market.eta * participation
-        perm_shift += market.gamma * participation
-        if side > 0:  # buy
-            exec_prices[k] = prices[k] * (1 + temp_frac + spread_frac + perm_shift)
+        n_k=float(trades[k])
+        participation=n_k / max(market.adv, 1e-12)
+        temp_frac=market.eta*participation
+        perm_shift+=market.gamma*participation
+        if side>0:# buy
+            exec_prices[k]=prices[k]*(1 + temp_frac + spread_frac + perm_shift)
         else:         # sell
-            exec_prices[k] = prices[k] * (1 - temp_frac - spread_frac - perm_shift)
+            exec_prices[k]=prices[k]*(1-temp_frac-spread_frac-perm_shift)
 
-    total_shares = float(np.sum(trades))
-    avg_exec = float(np.dot(trades, exec_prices) / total_shares)
-    sched_vwap = float(np.dot(trades, prices) / total_shares)
+    total_shares=float(np.sum(trades))
+    avg_exec=float(np.dot(trades, exec_prices) / total_shares)
+    sched_vwap=float(np.dot(trades, prices) / total_shares)
     # Positive numbers are worse costs regardless of side.
-    if side > 0:
-        is_arrival_bps = (avg_exec - S0) / S0 * 10000
-        is_sched_bps = (avg_exec - sched_vwap) / S0 * 10000
+    if side>0:
+        is_arrival_bps=(avg_exec-S0)/S0*10000
+        is_sched_bps=(avg_exec-sched_vwap)/S0*10000
     else:
-        is_arrival_bps = (S0 - avg_exec) / S0 * 10000
-        is_sched_bps = (sched_vwap - avg_exec) / S0 * 10000
+        is_arrival_bps=(S0-avg_exec)/S0*10000
+        is_sched_bps=(sched_vwap-avg_exec)/S0*10000
     return {
         "label": label,
-        "avg_exec_price": round(avg_exec, 4),
-        "arrival_price": round(S0, 4),
+        "avg_exec_price": round(avg_exec,4),
+        "arrival_price": round(S0,4),
         "schedule_vwap": round(sched_vwap, 4),
         "arrival_shortfall_bps": round(is_arrival_bps, 2),
         "schedule_shortfall_bps": round(is_sched_bps, 2),
@@ -741,9 +741,10 @@ def plot_full_analysis(
         y=0.998,
         fontweight="bold",
     )
-    plt.savefig("vwap_ac_analysis.png", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
+    os.makedirs("images", exist_ok=True)
+    plt.savefig("images/vwap_ac_analysis.png", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.show()
-    print("\nFigure saved → vwap_ac_analysis.png")
+    print("\nFigure saved → images/vwap_ac_analysis.png")
 
 # SECTION 14 — MAIN
 def main():
@@ -823,6 +824,7 @@ def main():
         .round(3)
     )
     print("\n" + summary.to_string())
+
     print("\nGenerating 9-panel figure...")
     plot_full_analysis(market, order, df, mc, sens, bt_df)
     print("\nDone.")
