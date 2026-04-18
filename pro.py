@@ -1,19 +1,3 @@
-"""
-VWAP Execution & Almgren-Chriss Market Impact Model
-
-Research-grade implementation with:
-  1. Real market data via yfinance, with safe fallback to synthetic data
-  2. Empirical proxy volume-curve estimation
-  3. Heuristic impact parameter calibration from daily OHLCV
-  4. Consistent Almgren-Chriss scheduling model
-  5. VWAP / TWAP / AC-Optimal execution schedules
-  6. Pathwise slippage simulation with realized implementation shortfall
-  7. Monte Carlo analysis using path-dependent realized costs
-  8. Parameter sensitivity study
-  9. Alpha decay model
-  10. Walk-forward historical backtest with realized fill prices
-  11. Full 9-panel visualization
-"""
 import warnings
 warnings.filterwarnings("ignore")
 import numpy as np
@@ -161,7 +145,6 @@ def calibrate_impact_parameters(df: pd.DataFrame) -> CalibrationResult:
         Regress next-day return on signed participation proxy.
     Temporary impact eta:
         Estimate from high-low volatility scaled by liquidity.
-
     Spread:
         Daily-bar proxy via high-low estimator, clipped to a sensible range.
     """
@@ -445,7 +428,6 @@ def historical_backtest(
 ) -> pd.DataFrame:
     """
     Walk-forward backtest using realized fills on historical close paths.
-
     For each rebalance date:
       - re-estimate local sigma and ADV from trailing data only
       - schedule TWAP, VWAP, AC execution over next T days
