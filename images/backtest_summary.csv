@@ -1,0 +1,4 @@
+strategy,trades,avg_realized_cost_bps,avg_schedule_shortfall_bps,avg_captured_alpha_pct,total_net_alpha_pct,sharpe_like
+AC-Optimal,11,40.597,40.597,0.243,-1.792,-11.657
+TWAP,11,-4.391,30.307,0.243,3.156,0.363
+VWAP,11,0.603,30.892,0.243,2.607,0.366

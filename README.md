@@ -14,4 +14,5 @@ Research-style execution modeling project featuring:
 - stylized walk-forward backtest
 - 9-panel visualization
 - flat-price consistency test
+- Backtest Summary
 

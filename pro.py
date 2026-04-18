@@ -221,56 +221,70 @@ class AlmgrenChriss:
         self.m=market
         self.o=order
         self.tau=1.0
-        self.kappa=np.sqrt(order.lam * market.sigma**2 / max(market.eta, 1e-12)) / self.tau
+        sigma_dollar=self.m.price*self.m.sigma
+        a_temp=self.m.price*self.m.eta/max(self.m.adv,1.0)
+        self.kappa = np.sqrt(self.o.lam * sigma_dollar**2 / max(a_temp, 1e-12)) / self.tau
 
     def optimal_trajectory(self) -> np.ndarray:
-        """Remaining inventory trajectory x_k, length T+1."""
-        T,X=self.o.T, self.o.X
-        k=np.arange(T + 1, dtype=float)
-        denom=np.sinh(self.kappa * T * self.tau)
-        if denom<1e-12:
+        T, X = self.o.T, self.o.X
+        k = np.arange(T + 1, dtype=float)
+        z = self.kappa * T * self.tau
+    # If urgency is extremely high, use near-immediate liquidation fallback
+        if not np.isfinite(z) or z > 50:
+            traj = np.zeros(T + 1)
+            traj[0] = X
+            return traj
+        denom = np.sinh(z)
+        if denom < 1e-12 or not np.isfinite(denom):
             return X * (1 - k / T)
-        traj=X* np.sinh(self.kappa*(T-k)*self.tau)/denom
-        return np.maximum(traj,0.0)
-
-    def optimal_trades(self)->np.ndarray:
-        """Shares traded in each period."""
-        return np.diff(-self.optimal_trajectory())
+        traj = X * np.sinh(self.kappa * (T - k) * self.tau) / denom
+        return np.maximum(traj, 0.0)
+    
+    def optimal_trades(self) -> np.ndarray:# Shares traded in each period
+        trades = np.maximum(-np.diff(self.optimal_trajectory()), 0.0)
+        total = trades.sum()
+        if not np.isfinite(total) or total <= 0:
+            return np.full(self.o.T, self.o.X / self.o.T)
+        trades *= self.o.X / total
+        return trades
 
     def expected_cost(self,trades: np.ndarray) -> float:
-        """Expected cost in dollars, AC-style."""
-        perm=0.5*self.m.gamma*self.o.X**2
-        temp=(self.m.eta/self.tau)*float(np.sum(trades**2))
-        return perm+temp
+        
+        impact_scale = self.m.price / max(self.m.adv, 1.0) ## expected cost in dollars,AC-style
+        perm = 0.5 * self.m.gamma * impact_scale * self.o.X**2
+        temp = (self.m.eta * impact_scale / self.tau) * float(np.sum(trades**2))
+        return perm + temp
 
     def variance_cost(self, trajectory: np.ndarray) -> float:
         """Variance term in dollars^2."""
+        sigma_dollar = self.m.price * self.m.sigma
         x_mid=trajectory[1:]
-        return float(self.m.sigma**2 * self.tau * np.sum(x_mid**2))
+        return float(sigma_dollar**2 * self.tau * np.sum(x_mid**2))
 
     def execution_shortfall_bps(self, trades: np.ndarray) -> Dict[str, float]:
         """Analytical expected-cost breakdown in basis points."""
-        X,S0,tau=self.o.X, self.m.price, self.tau
-        traj=np.r_[X, X - np.cumsum(trades)]
-        traj=np.maximum(traj, 0.0)
+        X, S0, tau = self.o.X, self.m.price, self.tau
+        traj = np.r_[X, X - np.cumsum(trades)]
+        traj = np.maximum(traj, 0.0)
 
-        cost_temp=(self.m.eta/tau)*float(np.sum(trades**2))
-        cost_perm=0.5*self.m.gamma *X**2
-        half_spread=(self.m.spread_bps / 10000) * S0 / 2
-        cost_spread=half_spread*float(np.sum(np.abs(trades)))
-        risk_dollar=self.o.lam*self.variance_cost(traj)
-        total=cost_temp + cost_perm + cost_spread
+        impact_scale = self.m.price / max(self.m.adv, 1.0)
+        cost_temp = (self.m.eta * impact_scale / tau) * float(np.sum(trades**2))
+        cost_perm = 0.5 * self.m.gamma * impact_scale * X**2
+        half_spread = (self.m.spread_bps / 10000) * S0 / 2
+        cost_spread = half_spread * float(np.sum(np.abs(trades)))
+        risk_dollar = self.o.lam * self.variance_cost(traj)
+        total = cost_temp + cost_perm + cost_spread
 
         def bps(d: float) -> float:
-            return round(d/(X*S0)*10000,3)
+            return round(d / (X * S0) * 10000, 3)
 
         return {
-            "temporary_impact_bps":bps(cost_temp),
-            "permanent_impact_bps":bps(cost_perm),
+            "temporary_impact_bps": bps(cost_temp),
+            "permanent_impact_bps": bps(cost_perm),
             "spread_cost_bps": bps(cost_spread),
-            "risk_penalty_bps":bps(risk_dollar),
-            "total_cost_bps":bps(total),
-            "total_with_risk_bps":bps(total + risk_dollar),
+            "risk_penalty_bps": bps(risk_dollar),
+            "total_cost_bps": bps(total),
+            "total_with_risk_bps": bps(total + risk_dollar),
         }
 # SECTION 7 — PATHWISE SLIPPAGE SIMULATION
 def simulate_slippage(
@@ -622,8 +636,9 @@ def plot_full_analysis(
     _style(ax2, "B  Proxy Intraday Volume Curve")
 
     ax3 = fig.add_subplot(gs[0, 2])
-    temp_c = market.eta * ac_t**2 / (order.X * market.price) * 10000
-    perm_c = 0.5 * market.gamma * ac_t**2 / (order.X * market.price) * 10000
+    impact_scale = market.price / max(market.adv, 1.0)
+    temp_c = market.eta * impact_scale * ac_t**2 / (order.X * market.price) * 10000
+    perm_c = 0.5 * market.gamma * impact_scale * ac_t**2 / (order.X * market.price) * 10000
     w = 0.35
     ax3.bar(days - w / 2, temp_c, width=w, color=BLUE, alpha=0.85, label="Temporary")
     ax3.bar(days + w / 2, perm_c, width=w, color=ORANGE, alpha=0.85, label="Permanent")
@@ -635,7 +650,10 @@ def plot_full_analysis(
     ax4 = fig.add_subplot(gs[1, 0])
     for name, color in [("TWAP", GREEN), ("VWAP", BLUE), ("AC-Optimal", ORANGE)]:
         data = mc_results[name]["realized_cost_bps"]
-        ax4.hist(data, bins=40, alpha=0.55, color=color, label=f"{name}  μ={data.mean():.1f}bps")
+        data = data[np.isfinite(data)]
+        if len(data) == 0:
+            continue
+    ax4.hist(data, bins=40, alpha=0.55, color=color, label=f"{name}  μ={data.mean():.1f}bps")
     ax4.set_xlabel("Realized cost (bps)")
     ax4.set_ylabel("Frequency")
     ax4.legend(fontsize=8, facecolor=PANEL, labelcolor=TEXT, framealpha=0.9)
@@ -644,7 +662,10 @@ def plot_full_analysis(
     ax5 = fig.add_subplot(gs[1, 1])
     for name, color in [("TWAP", GREEN), ("VWAP", BLUE), ("AC-Optimal", ORANGE)]:
         data = mc_results[name]["net_alpha"]
-        ax5.hist(data, bins=40, alpha=0.55, color=color, label=f"{name}  μ={data.mean():.2f}%")
+        data = data[np.isfinite(data)]
+        if len(data) == 0:
+            continue
+    ax5.hist(data, bins=40, alpha=0.55, color=color, label=f"{name}  μ={data.mean():.2f}%")
     ax5.axvline(0, color=MUTED, lw=1, ls="--")
     ax5.set_xlabel("Net alpha (%)")
     ax5.set_ylabel("Frequency")
@@ -806,9 +827,35 @@ def main():
         .round(3)
     )
     print("\n" + summary.to_string())
+    os.makedirs("images", exist_ok=True)
 
+    summary.to_csv("images/backtest_summary.csv")
+    fig, ax = plt.subplots(figsize=(16,4.8))
+    ax.axis('off')
+    table = ax.table(
+        cellText=summary.round(3).values,
+        colLabels=summary.columns,
+        rowLabels=summary.index,
+        cellLoc="center",
+        loc="center"
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(11)
+    table.scale(1.2, 2.0)
+
+    for (row, col), cell in table.get_celld().items():
+        cell.set_linewidth(1.2)
+        if row == 0:
+            cell.set_text_props(weight="bold")
+            cell.set_facecolor("#eaeaea")
+        if col == -1:
+            cell.set_text_props(weight="bold")
+
+    plt.tight_layout()
+    plt.savefig("images/summary_table.png", dpi=220, bbox_inches="tight")
+    plt.close()
     print("\nGenerating 9-panel figure...")
-    plot_full_analysis(market, order, df, mc, sens, bt_df)
+    plot_full_analysis(market,order, df, mc, sens, bt_df)
     print("\nDone.")
 
 if __name__ == "__main__":
