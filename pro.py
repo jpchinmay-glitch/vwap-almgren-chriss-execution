@@ -231,9 +231,7 @@ class AlmgrenChriss:
         z = self.kappa * T * self.tau
     # If urgency is extremely high, use near-immediate liquidation fallback
         if not np.isfinite(z) or z > 50:
-            traj = np.zeros(T + 1)
-            traj[0] = X
-            return traj
+            return X*(1-k/T)
         denom = np.sinh(z)
         if denom < 1e-12 or not np.isfinite(denom):
             return X * (1 - k / T)
@@ -653,7 +651,7 @@ def plot_full_analysis(
         data = data[np.isfinite(data)]
         if len(data) == 0:
             continue
-    ax4.hist(data, bins=40, alpha=0.55, color=color, label=f"{name}  μ={data.mean():.1f}bps")
+        ax4.hist(data, bins=40, alpha=0.55, color=color, label=f"{name}  μ={data.mean():.1f}bps")
     ax4.set_xlabel("Realized cost (bps)")
     ax4.set_ylabel("Frequency")
     ax4.legend(fontsize=8, facecolor=PANEL, labelcolor=TEXT, framealpha=0.9)
@@ -665,7 +663,7 @@ def plot_full_analysis(
         data = data[np.isfinite(data)]
         if len(data) == 0:
             continue
-    ax5.hist(data, bins=40, alpha=0.55, color=color, label=f"{name}  μ={data.mean():.2f}%")
+        ax5.hist(data, bins=40, alpha=0.55, color=color, label=f"{name}  μ={data.mean():.2f}%")
     ax5.axvline(0, color=MUTED, lw=1, ls="--")
     ax5.set_xlabel("Net alpha (%)")
     ax5.set_ylabel("Frequency")
@@ -806,7 +804,7 @@ def main():
     for name in ["TWAP", "VWAP", "AC-Optimal"]:
         c = mc[name]["realized_cost_bps"]
         na = mc[name]["net_alpha"]
-        print(f"  {name:<14}  {c.mean():6.1f} ± {c.std():5.1f}                 {na.mean():+.2f} ± {na.std():.2f}%")
+        print(f"  {name:<14}  {c.mean():6.1f} ± {c.std():5.1f}{na.mean():+.2f} ± {na.std():.2f}%")
 
     print("\n[6/7] Parameter sensitivity study...")
     sens = sensitivity_study(market, order)
